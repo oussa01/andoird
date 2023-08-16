@@ -1,0 +1,229 @@
+package com.example.gpstracker;
+
+import static com.example.gpstracker.BuildConfig.VERSION_NAME;
+import static com.example.gpstracker.ConfigActivity.sharedprefrences;
+
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+
+import android.Manifest;
+import android.annotation.SuppressLint;
+import android.content.BroadcastReceiver;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.IntentSender;
+import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
+import android.location.LocationManager;
+import android.os.Bundle;
+import android.os.IBinder;
+import android.util.Log;
+import android.view.View;
+import android.widget.Button;
+import android.widget.CompoundButton;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.common.api.ResolvableApiException;
+import com.google.android.gms.location.Granularity;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.LocationSettingsRequest;
+import com.google.android.gms.location.LocationSettingsResponse;
+import com.google.android.gms.location.LocationSettingsStatusCodes;
+import com.google.android.gms.location.Priority;
+import com.google.android.gms.location.SettingsClient;
+import com.google.android.gms.tasks.Task;
+
+import java.util.Timer;
+import java.util.TimerTask;
+
+public class MainActivity extends AppCompatActivity {
+    TextView tvlat,tvlng,tvacc,tvaddr,tvspeed,tvalt,version,test;
+    private Switch switchbutton;
+    public GPSService gpsBackground;
+    private boolean isServiceBound = false;
+    StartUpReceiver receiver = new StartUpReceiver();
+    private static final int PERMISSIONS_FINE_LOCATION = 99;
+    private static final int REQUEST_ENABLE_GPS = 101;
+
+    LocationRequest locationRequest;
+
+    private ServiceConnection serviceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName className, IBinder service) {
+            GPSService.LocationServiceBinder binder = (GPSService.LocationServiceBinder) service;
+            gpsBackground = binder.getService();
+            isServiceBound = true;
+        }
+        @Override
+        public void onServiceDisconnected(ComponentName className) {
+            isServiceBound = false;
+        }
+    };
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        setTitle("Transtu GPS location");
+        switchbutton = findViewById(R.id.switch1);
+        Button btnsetting = findViewById(R.id.btnparam);
+        tvlat = findViewById(R.id.tvlat);
+        tvlng = findViewById(R.id.tvlng);
+        tvacc = findViewById(R.id.tvacc);
+        tvspeed = findViewById(R.id.tvspd);
+        tvalt = findViewById(R.id.tvalt);
+        tvaddr = findViewById(R.id.tvaddr);
+        version = findViewById(R.id.version);
+        test = findViewById(R.id.test);
+        Button btntest = findViewById(R.id.btntest);
+        btntest.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                gpsBackground.getMessage();
+            }
+        });
+
+        switchbutton.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton compoundButton, boolean isChecked) {
+                if (isChecked) {
+                    gpsBackground.startgpslocation();
+
+                } else {
+
+
+                }
+            }
+        });
+
+        final Intent intent = new Intent(this.getApplication(), GPSService.class);
+        this.getApplication().startService(intent);
+        this.getApplication().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+                new BroadcastReceiver() {
+                    @SuppressLint("SetTextI18n")
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        String latitude = String.valueOf(intent.getDoubleExtra(GPSService.EXTRA_LATITUDE,0));
+                        String message = intent.getStringExtra(gpsBackground.EXTRA_MESSAGE);
+                        test.setText(message);
+                        if (latitude != null) {
+                            tvlat.setText(latitude);
+                        } else {
+                            tvlat.setText("N/A");
+                        }
+                        Double langitude = intent.getDoubleExtra(GPSService.EXTRA_LONGITUDE,0);
+                        if (langitude != null) {
+                            tvlng.setText(String.valueOf(langitude));
+                            Log.i("lattitude",String.valueOf(langitude));
+                        } else {
+                            tvlng.setText("N/A");
+                        }
+                        String speed = intent.getStringExtra(GPSService.EXTRA_SPEED);
+                        if (speed != null) {
+                            tvspeed.setText(speed);
+                        } else {
+                            tvspeed.setText("N/A");
+                        }
+                        String acc = intent.getStringExtra(GPSService.EXTRA_ACCURACY);
+                        if (acc != null) {
+                            tvacc.setText(acc);
+                        } else {
+                            tvacc.setText("N/A");
+                        }
+                        String alt = intent.getStringExtra(GPSService.EXTRA_ALTITUDE);
+                        if (alt != null) {
+                            tvalt.setText(alt);
+                        } else {
+                            tvalt.setText("N/A");
+                        }
+                        String addr = intent.getStringExtra(GPSService.EXTRA_ADDR);
+                        if (addr != null) {
+                            tvaddr.setText(addr);
+                        } else {
+                            tvaddr.setText("N/A");
+                        }
+
+                    }
+                }, new IntentFilter(GPSService.ACTION_LOCATION_BROADCAST)
+
+        );
+
+
+        version.setText("version: " + VERSION_NAME);
+        btnsetting.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                openActivity();
+            }
+        });
+        checkGpsEnabled();
+    }
+
+
+
+    public void openActivity(){
+        Intent intent = new Intent(this,ConfigActivity.class);
+        startActivity(intent);
+
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (resultCode == RESULT_OK) {
+            // User enabled GPS
+            gpsBackground.startgpslocation();
+
+            Toast.makeText(MainActivity.this, "GPS en marche.", Toast.LENGTH_SHORT).show();
+        } else if (resultCode == RESULT_CANCELED) {
+            // User declined to enable GPS
+            Toast.makeText(MainActivity.this, "GPS n\'est pas en ecoute.", Toast.LENGTH_SHORT).show();
+        }
+
+    }
+
+    private void showEnableGpsDialog() {
+        locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000).setWaitForAccurateLocation(false)
+                .setGranularity(Granularity.GRANULARITY_PERMISSION_LEVEL)
+                .setWaitForAccurateLocation(false).setMinUpdateIntervalMillis(50).setMaxUpdateDelayMillis(100).setMinUpdateDistanceMeters(2.0f).build();
+        LocationSettingsRequest.Builder settingsBuilder = new LocationSettingsRequest.Builder()
+                .addLocationRequest(locationRequest);
+
+        SettingsClient settingsClient = LocationServices.getSettingsClient(this);
+        Task<LocationSettingsResponse> task = settingsClient.checkLocationSettings(settingsBuilder.build());
+
+        task.addOnCompleteListener(task1 -> {
+            try {
+                LocationSettingsResponse response = task1.getResult(ApiException.class);
+                gpsBackground.startgpslocation();
+            } catch (ApiException exception) {
+                if (exception.getStatusCode() == LocationSettingsStatusCodes.RESOLUTION_REQUIRED) {
+                    try {
+                        ResolvableApiException resolvable = (ResolvableApiException) exception;
+                        resolvable.startResolutionForResult(MainActivity.this, REQUEST_ENABLE_GPS);
+                    } catch (IntentSender.SendIntentException e) {
+                        // Ignore the error
+                    }
+                }
+            }
+        });
+    }
+    private void checkGpsEnabled() {
+        LocationManager locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        if (locationManager != null && !locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            showEnableGpsDialog();
+        }
+    }
+
+    public String getPreferenceValue(String key) {
+        return getSharedPreferences(sharedprefrences,0).getString(key, "");
+    }
+}

@@ -1,0 +1,267 @@
+package com.example.gpstracker;
+
+import android.Manifest;
+import android.annotation.SuppressLint;
+import android.app.ActivityManager;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.location.Address;
+import android.location.Geocoder;
+import android.location.Location;
+import android.os.Binder;
+import android.os.IBinder;
+import android.util.Log;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.Granularity;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
+
+import org.json.JSONObject;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.concurrent.Executor;
+
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+
+public class GPSService extends Service {
+    private static final int PERMISSIONS_FINE_LOCATION = 99;
+    private static final int REQUEST_ENABLE_GPS = 101;
+    public static final String
+            ACTION_LOCATION_BROADCAST = GPSService.class.getName() + "LocationBroadcast",
+            EXTRA_LATITUDE = "extra_latitude",
+            EXTRA_LONGITUDE = "extra_longitude",
+            EXTRA_ALTITUDE = "extra_altitude",
+            EXTRA_ACCURACY = "extra_accuracy",
+            EXTRA_SPEED = "extra_speed",
+            EXTRA_ADDR = "extra_address",
+            EXTRA_BEARING = "extra_bearing";
+    public static final String ACTION_MESSAGE = "example.gpstracker.GPSService.ACTION_MESSAGE";
+    public static final String EXTRA_MESSAGE = "message";
+    private final IBinder binder = new LocationServiceBinder();
+
+    FusedLocationProviderClient fusedLocationProviderClient;
+    LocationRequest locationRequest;
+    LocationCallback locationCallBack;
+    private Timer timer;
+    private ActivityManager activityManager;
+
+
+    private long upTime = 0;
+    private String androidId = "";
+
+    public GPSService() {
+    }
+
+
+    @SuppressLint("HardwareIds")
+    @Override
+    public void onCreate()
+    {
+        super.onCreate();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId)
+    {
+
+
+
+        super.onStartCommand(intent, flags, startId);
+        return START_NOT_STICKY;
+    }
+
+
+    class LocationServiceBinder extends Binder {
+        GPSService getService() {
+            return GPSService.this;
+        }
+    }
+    @SuppressLint("SimpleDateFormat")
+
+    private void Setuplocation() {
+        locationRequest = new com.google.android.gms.location.LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000).setWaitForAccurateLocation(false)
+                .setGranularity(Granularity.GRANULARITY_PERMISSION_LEVEL)
+                .setWaitForAccurateLocation(false).setMinUpdateIntervalMillis(50).setMaxUpdateDelayMillis(100).setMinUpdateDistanceMeters(2.0f).build();
+        upTime = android.os.SystemClock.uptimeMillis();
+        activityManager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        locationCallBack = new LocationCallback() {
+            @Override
+            public void onLocationResult(@NonNull LocationResult locationResult) {
+                super.onLocationResult(locationResult);
+                if (locationResult != null) {
+                    Location location = locationResult.getLastLocation();
+                    if (location != null) {
+                        sendBroadcastToUI(location);
+                    }
+                }
+
+            }
+
+
+        };
+    }
+
+
+    public void sendRequestToServer(Double lat,Double lang,Double alt,float speed,float acc,String addr,String versionandroid,String password){
+        OkHttpClient client = new OkHttpClient();
+        MediaType JSON = MediaType.get("application/json; charset=utf-8");
+        String data = "{" +
+                "\"lat\": " + lat + "," +
+                "\"lang\": " + lang + "," +
+                "\"alt\": " + alt + "," +
+                "\"speed\": " + speed + "," +
+                "\"acc\": " + acc + "," +
+                "\"addr\": \"" + addr + "\"," +
+                "\"versionandroid\": \"" + versionandroid + "\"," +
+                "\"password\": \"" + password + "\"" +
+                "}";
+        RequestBody requestBody = RequestBody.create(data, JSON);
+        String URL = "https://eonx9rm70t145ha.m.pipedream.net";
+        Request request = new Request.Builder()
+                .url(URL)
+                .post(requestBody)
+                .build();
+        try {
+            Response response = client.newCall(request).execute();
+            if (response.isSuccessful()) {
+                String responseBody = response.body().string();
+                JSONObject jsonResponse = new JSONObject(responseBody);
+                String status = jsonResponse.getString("status");
+                String message = jsonResponse.getString("message");
+                if (status.equals("success")) {
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+                } else if (status.equals("error")) {
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+
+                } else {
+                    Toast.makeText(this,status , Toast.LENGTH_SHORT).show();
+                }
+
+            } else {
+                Toast.makeText(this, "failed to send data to server", Toast.LENGTH_LONG).show();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            // Handle the exception
+        }
+    }
+    public void startgpslocation(){
+        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            fusedLocationProviderClient.requestLocationUpdates(locationRequest, locationCallBack, null);
+            timer = new Timer();
+            timer.scheduleAtFixedRate(new TimerTask() {
+                @Override
+                public void run() {
+                    try {
+                        updateGps(getApplicationContext());
+                    }catch (Exception e){
+                        e.printStackTrace();
+                    }
+
+                }
+            }, 0, 1000);
+
+        }
+    }
+
+    public void updateGps(Context context) {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(GPSService.this);
+            fusedLocationProviderClient.getLastLocation().addOnSuccessListener((Executor) this, location -> sendBroadcastToUI(location));
+        } else {
+            // Request permission
+            // Handle permission request
+        }
+    }
+public void getMessage(){
+    Intent intent = new Intent(ACTION_LOCATION_BROADCAST);
+    intent.putExtra(EXTRA_MESSAGE,"from service");
+}
+
+    private void sendBroadcastToUI(Location location){
+        Intent intent = new Intent(ACTION_LOCATION_BROADCAST);
+
+        if (location != null) {
+            intent.putExtra(EXTRA_LATITUDE,String.valueOf(location.getLatitude()));
+            Log.i("latt : ", String.valueOf(location.getLatitude()));
+            intent.putExtra(EXTRA_LONGITUDE,String.valueOf(location.getLongitude()));
+
+            if (location.hasAltitude()) {
+                intent.putExtra(EXTRA_ALTITUDE,String.valueOf(location.getAltitude()));
+
+            } else {
+                intent.putExtra(EXTRA_ALTITUDE,"Non disponible");
+            }
+            // Display speed in km/h
+            if (location.hasSpeed()) {
+                float speedKmh = location.getSpeed() * 3.6f; // Convert m/s to km/h
+                intent.putExtra(EXTRA_SPEED,String.valueOf(speedKmh));
+            } else {
+                intent.putExtra(EXTRA_SPEED,"Non disponible");
+            }
+
+            if (location.hasAccuracy()) {
+                intent.putExtra(EXTRA_ACCURACY,String.valueOf(location.getAccuracy()));
+                Log.i("accuracy:", String.valueOf(location.getAccuracy()));
+            } else {
+                intent.putExtra(EXTRA_ACCURACY,"Non disponible");
+            }
+
+
+            getAddressFromLocation(location.getLatitude(), location.getLongitude(),intent);
+        } else {
+
+            // Handle the case where location is null
+            intent.putExtra(EXTRA_LATITUDE,"Latitude: N/A");
+            intent.putExtra(EXTRA_LONGITUDE,"Latitude: N/A");
+            intent.putExtra(EXTRA_ALTITUDE,"Altitude: N/A");
+            intent.putExtra(EXTRA_ACCURACY,"Accuracy: N/A");
+            intent.putExtra(EXTRA_SPEED,"Speed: N/A");
+            intent.putExtra(EXTRA_ADDR, "Address not available");
+        }
+
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+    }
+    private void getAddressFromLocation(double latitude, double longitude,Intent intent) {
+
+        Geocoder geocoder = new Geocoder(this);
+
+        try {
+            List<Address> addresses = geocoder.getFromLocation(latitude, longitude, 1);
+
+            if (!addresses.isEmpty()) {
+                Address address = addresses.get(0);
+                String addressText = address.getAddressLine(0); // Get full address including street, city, etc.
+                intent.putExtra(EXTRA_ADDR,addressText);
+            } else {
+                intent.putExtra(EXTRA_ADDR,"Address not available");
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            intent.putExtra(EXTRA_ADDR,"Address retrieval error");
+        }
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return binder;
+    }
+}
